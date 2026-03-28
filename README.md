@@ -481,6 +481,7 @@ I'm Abdelsalam Mostafa, a Computer Science graduate and Software Engineer from E
 ## Commitment
 
 I will work full-time on the project during the coding period, In Sha Allah.
+
 I will dedicate 20-35 hours weekly, In Sha Allah.
 
 ---
