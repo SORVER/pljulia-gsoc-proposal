@@ -268,7 +268,7 @@ This fix is not merged yet. Then it loops through the result and calls `jl_eval_
 - **It's slow.** `using Pkg` itself takes time, and it runs on every new PostgreSQL backend connection. For a server handling many connections, this adds up.
 - **No error handling.** If a package fails to load (maybe it was removed or is broken), the error is not reported to the user. The loop just continues.
 - **No user control.** There's no GUC (PostgreSQL configuration variable) to let users choose which packages to load, or to disable package loading entirely for faster startup.
-- **String concatenation for `using` commands.** The code builds the command with `strcpy`/`strcat` into a fixed buffer. A recent fix capped the buffer size, but this is still not great.
+- **String concatenation for `using` commands.** The code builds the command with `strcpy`/`strcat` into a fixed buffer. A recent fix capped the buffer size, but this is still not great. The same unsafe `strcpy`/`strcat` pattern also appears in `pljulia_compile` (function compilation), the trigger path, and the event trigger path. All of these should be replaced with PostgreSQL's `StringInfo` API.
 
 The fix is to first replace `Pkg.installed()` with `Pkg.dependencies()` (Option B), and then add a PostgreSQL GUC like `pljulia.preload_packages` that accepts a comma-separated list of package names (or `'*'` for all, `''` for none). This gives users control over startup time and avoids loading packages they don't need. Error handling should also be added so that if a package fails to load, the user sees a `WARNING` with the package name and the Julia error message, instead of silent failure.
 
@@ -339,6 +339,7 @@ Add features that other procedural languages already have.
 - **SQL quoting helpers:** `quote_literal()`, `quote_ident()`, `quote_nullable()` so users can build dynamic queries safely
 - **Extension upgrade scripts:** `pljulia--0.8--0.9.sql` so `ALTER EXTENSION pljulia UPDATE` works without dropping everything
 - **Error path tests:** Tests that check what happens when things go wrong (wrong types, NULL in unexpected places, bad SQL, Julia exceptions)
+- **Test coverage gaps I found:** NULL input is completely untested (SQL `NULL` maps to Julia `nothing` correctly, but no test passes NULL as input). Trigger `SKIP` return value is documented in the README but has no test. `STRICT` functions (NULL in → NULL out without running Julia code) are a standard PostgreSQL feature with zero coverage in the test suite
 
 **Goal:** Transaction control works. Errors show stack traces. The extension can be upgraded.
 
@@ -464,6 +465,8 @@ These are stretch goals, only if there is time after the first three milestones.
 - [Issue #12](https://github.com/pljulia/pljulia/issues/12) Build fails on Julia 1.12.4 with PostgreSQL 16 on Linux (Ubuntu): Reported and investigated
 - [Issue #22](https://github.com/pljulia/pljulia/issues/22) Deprecated Pkg.installed() should be replaced by Pkg.dependencies(): Reported
 - [Issue #33](https://github.com/pljulia/pljulia/issues/33) 5 of 24 regression tests fail on PostgreSQL 16 due to hidden symbol visibility: Reported and diagnosed
+
+**Note:** My focus so far has been on reading the codebase, testing across versions, and identifying issues rather than submitting many PRs. At this stage of PL/Julia, finding and documenting the problems is more valuable than rushing fixes — it builds the roadmap that the GSoC work will follow.
 
 ---
 
