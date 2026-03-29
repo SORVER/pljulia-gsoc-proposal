@@ -258,12 +258,12 @@ But `Pkg.installed()` was deprecated in Julia 1.4, so every time a PostgreSQL ba
 Warning: Pkg.installed() is deprecated
 ```
 
-I opened [Issue #22](https://github.com/pljulia/pljulia/issues/22) about this. The fix is to replace it with `Pkg.dependencies()`, which is the current supported API. There are two options:
+I opened [Issue #22](https://github.com/pljulia/pljulia/issues/22) about this. The fix is to replace it with `Pkg.dependencies()`, which is the current supported API and does not give a warning. There are two options:
 
 - **Option A (no filter):** `collect(p.name for p in values(Pkg.dependencies()))` loads all packages including transitive dependencies. For example, if you add `DataFrames`, it will also load `Tables` and other packages that `DataFrames` depends on. This is slower.
 - **Option B (with filter):** `collect(p.name for p in values(Pkg.dependencies()) if p.is_direct_dep)` loads only packages the user explicitly added with `Pkg.add()`. This is faster and makes more sense.
 
-Then it loops through the result and calls `jl_eval_string("using PackageName")` for each package. On top of the deprecated API, there are more problems:
+This fix is not merged yet. Then it loops through the result and calls `jl_eval_string("using PackageName")` for each package. On top of the deprecated API, there are more problems:
 
 - **It's slow.** `using Pkg` itself takes time, and it runs on every new PostgreSQL backend connection. For a server handling many connections, this adds up.
 - **No error handling.** If a package fails to load (maybe it was removed or is broken), the error is not reported to the user. The loop just continues.
