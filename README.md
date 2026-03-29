@@ -249,17 +249,28 @@ Second, after a commit, the database connection resets. Any prepared plans or op
 When PL/Julia starts up in `_PG_init()`, it loads all installed Julia packages by running:
 
 ```c
-jl_eval_string("using Pkg; collect(p.name for p in values(Pkg.dependencies()) if p.is_direct_dep)");
+jl_value_t *packages = jl_eval_string("using Pkg; collect(keys(Pkg.installed()))");
 ```
 
-Then it loops through the result and calls `jl_eval_string("using PackageName")` for each package. This works, but it's a workaround with problems:
+But `Pkg.installed()` was deprecated in Julia 1.4, so every time a PostgreSQL backend starts, it prints:
+
+```
+Warning: Pkg.installed() is deprecated
+```
+
+I opened [Issue #22](https://github.com/pljulia/pljulia/issues/22) about this. The fix is to replace it with `Pkg.dependencies()`, which is the current supported API. There are two options:
+
+- **Option A (no filter):** `collect(p.name for p in values(Pkg.dependencies()))` loads all packages including transitive dependencies. For example, if you add `DataFrames`, it will also load `Tables` and other packages that `DataFrames` depends on. This is slower.
+- **Option B (with filter):** `collect(p.name for p in values(Pkg.dependencies()) if p.is_direct_dep)` loads only packages the user explicitly added with `Pkg.add()`. This is faster and makes more sense.
+
+Then it loops through the result and calls `jl_eval_string("using PackageName")` for each package. On top of the deprecated API, there are more problems:
 
 - **It's slow.** `using Pkg` itself takes time, and it runs on every new PostgreSQL backend connection. For a server handling many connections, this adds up.
 - **No error handling.** If a package fails to load (maybe it was removed or is broken), the error is not reported to the user. The loop just continues.
 - **No user control.** There's no GUC (PostgreSQL configuration variable) to let users choose which packages to load, or to disable package loading entirely for faster startup.
 - **String concatenation for `using` commands.** The code builds the command with `strcpy`/`strcat` into a fixed buffer. A recent fix capped the buffer size, but this is still not great.
 
-The fix is to add a PostgreSQL GUC like `pljulia.preload_packages` that accepts a comma-separated list of package names (or `'*'` for all, `''` for none). This gives users control over startup time and avoids loading packages they don't need. Error handling should also be added so that if a package fails to load, the user sees a `WARNING` with the package name and the Julia error message, instead of silent failure.
+The fix is to first replace `Pkg.installed()` with `Pkg.dependencies()` (Option B), and then add a PostgreSQL GUC like `pljulia.preload_packages` that accepts a comma-separated list of package names (or `'*'` for all, `''` for none). This gives users control over startup time and avoids loading packages they don't need. Error handling should also be added so that if a package fails to load, the user sees a `WARNING` with the package name and the Julia error message, instead of silent failure.
 
 ---
 
@@ -347,19 +358,19 @@ These are stretch goals, only if there is time after the first three milestones.
 
 ## Timeline
 
-> This uses the extended GSoC timeline (~22 weeks).
+> Standard GSoC timeline (12 weeks).
 
-### Community Bonding (8 May – 31 May)
+### Community Bonding (1 May – 24 May)
 
 - Get in touch with the community and discuss the approach with mentors
 - Read through all of `pljulia.c` and `convert_args.c` carefully, write down every issue I find
 - Set up my development environment: PostgreSQL 14, 15, 16, 17 from source; Julia 1.9, 1.10, 1.11, 1.12
 - Run the 26 tests on each combination and record what passes and what fails
-- Talk with mentors about which parts of Milestone 3 and 4 are most important if time gets tight
+- Talk with mentors about which parts of Milestone 3 are most important if time gets tight
 
 ---
 
-### Milestone 1: Weeks 1–6 (1 June – 13 July)
+### Milestone 1: Weeks 1–4 (25 May – 21 June)
 
 **Week 1–2:** GC safety audit
 - Go through every function that holds a Julia value across a call (~44 unprotected variables)
@@ -367,90 +378,79 @@ These are stretch goals, only if there is time after the first three milestones.
 - Write stress tests that allocate a lot to make GC run during dangerous moments
 - Optionally build a debug Julia for deeper verification
 
-**Week 3:** Julia API fixes and type detection
+**Week 3:** Julia API fixes, type detection, shutdown, and SPI
 - Make sure array API migration is complete and correct everywhere
 - Replace `strcmp`-based Dict detection with `jl_isa(val, AbstractDict)`
 - Fix BigFloat detection the same way
-
-**Week 4:** Shutdown, SPI, and package loading fixes
 - Register `jl_atexit_hook` through `on_proc_exit()`
 - Add SPI connection depth tracking
-- Add cache invalidation callback so functions get recompiled when someone does `CREATE OR REPLACE`
-- Fix package loading: add `pljulia.preload_packages` GUC, add error handling for failed loads
 
-**Week 5–6:** CI and compatibility testing
+**Week 4:** Package loading, CI, and compatibility testing
+- Fix package loading: add `pljulia.preload_packages` GUC, add error handling for failed loads
 - Set up GitHub Actions with the Julia x PostgreSQL version matrix
-- Run all tests on all combinations
-- Fix whatever breaks
+- Run all tests on all combinations, fix whatever breaks
 
 ---
 
-### Milestone 2: Weeks 7–13 (14 July – 7 September)
+### Milestone 2: Weeks 5–8 (22 June – 19 July)
 
-**Week 7–8:** Date and timestamp types
-- Add `DATE`, `TIMESTAMP`, `TIMESTAMPTZ`
-- Write tests for each, including edge cases (leap days, DST, NULL)
+**Week 5–6:** Date, timestamp, time, and interval types
+- Add `DATE`, `TIMESTAMP`, `TIMESTAMPTZ`, `TIME`, `TIMETZ`, `INTERVAL`
+- Write tests for each, including edge cases (leap days, DST, midnight, NULL)
 
-**Week 9:** Time and interval types
-- Add `TIME`, `TIMETZ`, `INTERVAL`
-- Write tests
-
-**Week 10:** Binary data and UUID
+**Week 7:** Binary data, UUID, JSON, and numeric edge cases
 - Add `bytea` to `Vector{UInt8}` conversion (both ways)
 - Add `UUID` as string passthrough
-- Write round-trip tests
-
-**Week 11:** JSON and numeric edge cases
 - Add `JSONB` / `JSON` as string passthrough
 - Fix `NUMERIC` to handle Infinity and NaN
 - Write tests
 
-**Week 12–13:** Array parameters and review
+**Week 8:** Array parameters and review
 - Make sure all new types work as array elements too
 - Test multi-dimensional arrays with new types
 - Fix issues found during mentor review
 
+> **Note:** Midterm evaluation is due July 10. By this point, In Sha Allah, all stability fixes will be done and most types will be added.
+
 ---
 
-### Milestone 3: Weeks 14–19 (8 September – 19 October)
+### Milestone 3: Weeks 9–12 (20 July – 16 August)
 
-**Week 14–15:** Transaction control
+**Week 9–10:** Transaction control and error reporting
 - Write `pljulia_spi_commit()` and `pljulia_spi_rollback()`
 - Register them in `_PG_init()`
 - Add check that they are only called from procedures and DO blocks
 - Handle plan cache invalidation after commit
-- Write tests with `CREATE PROCEDURE` and `DO` blocks
-
-**Week 16:** Better error reporting
 - Replace `eval_string(sprint(...))` with direct C API calls
 - Switch from `elog()` to `ereport()` with SQLSTATE codes and DETAIL
 - Capture Julia backtrace and put it in the error DETAIL
-- Test with different kinds of exceptions
 
-**Week 17:** Prepared plan cursors and SD dictionary
-- Add `spi_exec_prepared(plan, args)` that returns a cursor
+**Week 11:** SD dictionary, SQL quoting, and upgrade scripts
 - Add per-function `SD` dictionary
-
-**Week 18:** SQL quoting and upgrade scripts
 - Add `quote_literal`, `quote_ident`, `quote_nullable`
 - Write `pljulia--0.8--0.9.sql` migration script
 
-**Week 19:** Error tests and documentation
+**Week 12:** Error tests, documentation, and final cleanup
 - Add tests for wrong types, bad SQL, exceptions, unexpected NULLs
 - Update README with all new types and features
-
----
-
-### Milestone 4 (Stretch): Weeks 20–22 (20 October – 10 November)
-- note: this milstone should be done only if all issues above are fixed In Sha Allah
-- Work on trusted variant proof-of-concept using JuliaC.jl if time allows
-- Add subtransaction support
-- Add more types based on mentor feedback
 - Write final project report: what was done, what still needs work, what I recommend for the next contributor
 
+> **Final submission deadline:** August 17–24, 2026
+
 ---
 
-**Note:** Milestones 1 and 2 are the priority. If anything takes longer than expected, it comes from Milestones 3 and 4. I will not, In Sha Allah, start adding new types until the stability work is done, because debugging type bugs on top of GC bugs is very difficult.
+### Stretch Goals (if time allows)
+
+> These will only be done if all issues above are fixed, In Sha Allah.
+
+- Trusted variant proof-of-concept using JuliaC.jl
+- Subtransaction support
+- More types (`ENUM`, domain types, `RECORD`) based on mentor feedback
+- Cursor from prepared plans: `spi_exec_prepared(plan, args)` without a limit
+
+---
+
+**Note:** Milestones 1 and 2 are the priority. If anything takes longer than expected, it comes from Milestone 3 and the stretch goals. I will not, In Sha Allah, start adding new types until the stability work is done, because debugging type bugs on top of GC bugs is very difficult.
 
 **Note:** All new tests will, In Sha Allah, be run on PostgreSQL 14 through 17 to make sure the extension works on all supported versions.
 
@@ -481,7 +481,6 @@ I'm Abdelsalam Mostafa, a Computer Science graduate and Software Engineer from E
 ## Commitment
 
 I will work full-time on the project during the coding period, In Sha Allah.
-
 I will dedicate 20-35 hours weekly, In Sha Allah.
 
 ---
