@@ -100,7 +100,7 @@ This is a dictionary that stays alive as long as the database connection.
 
 PL/Julia still targets older Julia versions and needs work before it can be considered production-ready. I recently contributed Julia 1.12 support with PostgreSQL 14/15, and that has been merged. The sections below describe the specific issues I found while working with the codebase.
 
-PL/Julia still targets Julia 1.6 and PostgreSQL 13. The CI pipeline on GitLab and the Dockerfile were built around those versions, and anything newer is either untested or breaks. I recently contributed support for Julia 1.12 with PostgreSQL 14 and 15, and that work has been merged, but compatibility across all supported versions is still an open problem that should be fixed in this project.
+PL/Julia still targets Julia 1.6 and PostgreSQL 13. The CI pipeline on GitLab and the Dockerfile were built around those versions, and anything newer is either untested or breaks. I recently contributed support for Julia 1.12 with PostgreSQL 14 and 15, and that work has been merged. When I tested against PostgreSQL 16, I found that 5 of 24 regression tests fail because Julia's `-fvisibility=hidden` flag hides SPI callback symbols from the shared library ([Issue #33](https://github.com/pljulia/pljulia/issues/33)). Compatibility across all supported versions is still an open problem that should be fixed in this project.
 
 A proper testing matrix covering different Julia and PostgreSQL versions would help ensure stability across environments. This will help a lot for anyone who wants to contribute to PL/Julia.
 
@@ -463,6 +463,7 @@ These are stretch goals, only if there is time after the first three milestones.
 - [PR #21](https://github.com/pljulia/pljulia/pull/21) Add return_bool to regression test suite and remove duplicate test file: Open
 - [Issue #12](https://github.com/pljulia/pljulia/issues/12) Build fails on Julia 1.12.4 with PostgreSQL 16 on Linux (Ubuntu): Reported and investigated
 - [Issue #22](https://github.com/pljulia/pljulia/issues/22) Deprecated Pkg.installed() should be replaced by Pkg.dependencies(): Reported
+- [Issue #33](https://github.com/pljulia/pljulia/issues/33) 5 of 24 regression tests fail on PostgreSQL 16 due to hidden symbol visibility: Reported and diagnosed
 
 ---
 
